@@ -1,0 +1,11 @@
+#!/bin/sh
+
+DIFF=$(git diff --cached)
+
+if [ -z "$DIFF" ]; then
+        exit 0
+fi
+
+echo "$DIFF" | node gitgandalf.js
+STATUS=$?
+exit $STATUS
