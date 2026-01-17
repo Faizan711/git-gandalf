@@ -3,21 +3,21 @@ const BASE_URL = "http://127.0.0.1:1234";
 const LLM_TIMEOUT_MS = 100000;
 
 const SYSTEM_PROMPT = `You are a senior software engineer acting as a pre-commit code reviewer.
-Your task is to analyze the provided git diff and metadata.
+  Your task is to analyze the provided git diff and metadata.
 
-Risk Criteria:
-- LOW: Formatting, comments, minor logic changes.
-- MEDIUM: New logic, missing error handling, complex regex.
-- HIGH: Security risks, secrets, destructiveness, infinite loops.
+  Risk Criteria:
+  - LOW: Formatting, comments, minor logic changes.
+  - MEDIUM: New logic, missing error handling, complex regex.
+  - HIGH: Security risks, secrets, destructiveness, infinite loops.
 
-You must output ONLY valid JSON. No conversational text. No markdown blocks.
+  You must output ONLY valid JSON. No conversational text. No markdown blocks.
 
-Response Schema:
-{
-    "risk": "LOW" | "MEDIUM" | "HIGH",
-    "issues": ["string"],
-    "summary": "string"
-}
+  Response Schema:
+  {
+      "risk": "LOW" | "MEDIUM" | "HIGH",
+      "issues": ["string"],
+      "summary": "string"
+  }
 `;
 
 let diff = "";
@@ -43,7 +43,7 @@ process.stdin.on("end", async () => {
     process.exit(0);
   }
 
-  console.log("Git Gandalf: Analyzing...");
+  process.stdout.write("🧙 Git Gandalf is reviewing...");
 
   try {
     const metadata = parseDiff(diff);
@@ -56,19 +56,20 @@ process.stdin.on("end", async () => {
 
     const rawOutput = await callLocalLLM(SYSTEM_PROMPT, userMessage);
 
-    // --- TICKET 7: JUDGMENT NORMALIZATION ---
-    console.log("Git Gandalf: Validating judgment...");
+    process.stdout.clearLine(0);
+    process.stdout.cursorTo(0);
 
     // This will throw an Error if the LLM output is garbage
     const decision = normalizeResponse(rawOutput);
     const policyAction = evaluateRisk(decision.risk);
-    console.log("\n--- TICKET 8 POLICY DECISION ---");
-    console.log(`Risk: ${decision.risk} -> Policy: ${policyAction}`);
-    console.log("--------------------------------");
+
+    renderReview(decision, policyAction);
+
     process.exit(0);
   } catch (error) {
-    console.error("\nGit Gandalf: ❌ INTERNAL ERROR");
-    console.error(`Reason: ${error.message}`);
+    process.stdout.clearLine(0);
+    process.stdout.cursorTo(0);
+    console.error("❌ Git Gandalf Error:", error.message);
     process.exit(1);
   }
 });
@@ -77,6 +78,7 @@ process.stdin.on("error", () => {
   process.exit(1);
 });
 
+//getting response from model and extracting our answer from all mess
 function normalizeResponse(rawText) {
   // 1. Remove <think> blocks (Common in reasoning models like Qwen/DeepSeek)
   let cleanText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "");
@@ -131,7 +133,6 @@ function normalizeResponse(rawText) {
   return { risk, issues, summary };
 }
 
-// ... (Rest of the boilerplate: getModelId, callLocalLLM, parseDiff) ...
 async function getModelId(controller) {
   const response = await fetch(`${BASE_URL}/v1/models`, {
     method: "GET",
@@ -168,6 +169,7 @@ async function callLocalLLM(systemPrompt, userPrompt) {
   }
 }
 
+//find all changes, no. of files, lines of code, etc
 function parseDiff(rawDiff) {
   const lines = rawDiff.split("\n");
   const files = new Set();
@@ -203,4 +205,45 @@ function evaluateRisk(risk) {
     default:
       return "ALLOW";
   }
+}
+
+// to display output on console
+function renderReview(decision, policy) {
+  const C = {
+    Reset: "\x1b[0m",
+    Red: "\x1b[31m",
+    Green: "\x1b[32m",
+    Yellow: "\x1b[33m",
+    Bold: "\x1b[1m",
+  };
+
+  console.log(`\n${C.Bold}🧙 Git Gandalf Review${C.Reset}\n`);
+
+  let riskColor = C.Green;
+  if (decision.risk === "HIGH") riskColor = C.Red;
+  if (decision.risk === "MEDIUM") riskColor = C.Yellow;
+
+  console.log(
+    `${C.Bold}Risk:${C.Reset}    ${riskColor}${decision.risk}${C.Reset}`,
+  );
+  console.log("");
+  if (decision.issues.length > 0) {
+    console.log(`${C.Bold}Issues:${C.Reset}`);
+    decision.issues.forEach((issue) => console.log(` - ${issue}`));
+  } else {
+    console.log(`${C.Bold}Issues:${C.Reset}  (none)`);
+  }
+
+  console.log("");
+  if (policy === "BLOCK") {
+    console.log(`${C.Red}${C.Bold}Decision: 🚫 BLOCK${C.Reset}`);
+    console.log(`${C.Red}${decision.summary}${C.Reset}`); // Summary explains the block
+  } else if (policy === "WARN") {
+    console.log(`${C.Yellow}${C.Bold}Decision: ⚠️  WARN${C.Reset}`);
+    console.log(`${C.Yellow}${decision.summary}${C.Reset}`);
+  } else {
+    console.log(`${C.Green}${C.Bold}Decision: ✅ ALLOW${C.Reset}`);
+    console.log(`${C.Green}${decision.summary}${C.Reset}`);
+  }
+  console.log("");
 }
