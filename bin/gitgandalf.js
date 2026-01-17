@@ -61,12 +61,10 @@ process.stdin.on("end", async () => {
 
     // This will throw an Error if the LLM output is garbage
     const decision = normalizeResponse(rawOutput);
-    if (decision.risk == "MEDIUM") {
-      console.log("Warning:", decision.summary);
-    }
-    if (decision.risk == "HIGH") {
-      process.exit(1);
-    }
+    const policyAction = evaluateRisk(decision.risk);
+    console.log("\n--- TICKET 8 POLICY DECISION ---");
+    console.log(`Risk: ${decision.risk} -> Policy: ${policyAction}`);
+    console.log("--------------------------------");
     process.exit(0);
   } catch (error) {
     console.error("\nGit Gandalf: ❌ INTERNAL ERROR");
@@ -79,10 +77,6 @@ process.stdin.on("error", () => {
   process.exit(1);
 });
 
-/**
- * Ticket 7: The "Bouncer" (Updated for Thinking Models)
- * Cleans <think> tags, markdown, and parses JSON.
- */
 function normalizeResponse(rawText) {
   // 1. Remove <think> blocks (Common in reasoning models like Qwen/DeepSeek)
   let cleanText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "");
@@ -196,4 +190,17 @@ function parseDiff(rawDiff) {
     lines_added: linesAdded,
     lines_removed: linesRemoved,
   };
+}
+
+//policy engine function
+function evaluateRisk(risk) {
+  switch (risk) {
+    case "HIGH":
+      return "BLOCK";
+    case "MEDIUM":
+      return "WARN";
+    case "LOW":
+    default:
+      return "ALLOW";
+  }
 }
