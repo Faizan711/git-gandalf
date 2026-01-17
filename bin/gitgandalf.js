@@ -5,6 +5,11 @@ const LLM_TIMEOUT_MS = 100000;
 const SYSTEM_PROMPT = `You are a senior software engineer acting as a pre-commit code reviewer.
 Your task is to analyze the provided git diff and metadata.
 
+Risk Criteria:
+- LOW: Formatting, comments, minor logic changes.
+- MEDIUM: New logic, missing error handling, complex regex.
+- HIGH: Security risks, secrets, destructiveness, infinite loops.
+
 You must output ONLY valid JSON. No conversational text. No markdown blocks.
 
 Response Schema:
@@ -13,11 +18,7 @@ Response Schema:
     "issues": ["string"],
     "summary": "string"
 }
-
-Risk Criteria:
-- LOW: Formatting, comments, minor logic changes.
-- MEDIUM: New logic, missing error handling, complex regex.
-- HIGH: Security risks, secrets, destructiveness, infinite loops.`;
+`;
 
 let diff = "";
 let byteCount = 0;
@@ -48,10 +49,10 @@ process.stdin.on("end", async () => {
     const metadata = parseDiff(diff);
 
     const userMessage = `METADATA:
-${JSON.stringify(metadata, null, 2)}
+    ${JSON.stringify(metadata, null, 2)}
 
-RAW DIFF:
-${diff}`;
+    RAW DIFF:
+    ${diff}`;
 
     const rawOutput = await callLocalLLM(SYSTEM_PROMPT, userMessage);
 
@@ -60,14 +61,14 @@ ${diff}`;
 
     // This will throw an Error if the LLM output is garbage
     const decision = normalizeResponse(rawOutput);
-
-    console.log("\n--- TICKET 7 VALIDATED OUTPUT ---");
-    console.log(JSON.stringify(decision, null, 2));
-    console.log("---------------------------------");
-
+    if (decision.risk == "MEDIUM") {
+      console.log("Warning:", decision.summary);
+    }
+    if (decision.risk == "HIGH") {
+      process.exit(1);
+    }
     process.exit(0);
   } catch (error) {
-    // Ticket 7 Requirement: Malformed output = Hard Failure
     console.error("\nGit Gandalf: ❌ INTERNAL ERROR");
     console.error(`Reason: ${error.message}`);
     process.exit(1);
@@ -79,24 +80,37 @@ process.stdin.on("error", () => {
 });
 
 /**
- * Ticket 7: The "Bouncer"
- * Cleans markdown, parses JSON, and enforces schema.
+ * Ticket 7: The "Bouncer" (Updated for Thinking Models)
+ * Cleans <think> tags, markdown, and parses JSON.
  */
 function normalizeResponse(rawText) {
-  // 1. Strip Markdown (LLMs love wrapping JSON in ```json ... ```)
-  const cleanText = rawText
+  // 1. Remove <think> blocks (Common in reasoning models like Qwen/DeepSeek)
+  let cleanText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, "");
+
+  // 2. Strip Markdown (LLMs love wrapping JSON in ```json ... ```)
+  cleanText = cleanText
     .replace(/```json/g, "")
     .replace(/```/g, "")
     .trim();
+
+  // 3. Aggressive JSON Hunt: Find the substring between the first '{' and last '}'
+  // This ignores any conversational filler text before or after the JSON.
+  const firstBrace = cleanText.indexOf("{");
+  const lastBrace = cleanText.lastIndexOf("}");
+
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    cleanText = cleanText.substring(firstBrace, lastBrace + 1);
+  }
 
   let data;
   try {
     data = JSON.parse(cleanText);
   } catch (e) {
-    throw new Error("LLM returned invalid JSON syntax.");
+    // Log the failed text to help debug
+    throw new Error(`LLM returned invalid JSON syntax.`);
   }
 
-  // 2. Validate Risk (Strict Enum)
+  // 4. Validate Risk (Strict Enum)
   if (!data.risk || typeof data.risk !== "string") {
     throw new Error("Missing 'risk' field.");
   }
@@ -108,15 +122,15 @@ function normalizeResponse(rawText) {
     );
   }
 
-  // 3. Normalize Issues (Ensure Array of Strings)
+  // 5. Normalize Issues (Ensure Array of Strings)
   let issues = [];
   if (Array.isArray(data.issues)) {
     issues = data.issues.map(String);
   } else if (typeof data.issues === "string") {
-    issues = [data.issues]; // Be nice: fix single string to array
+    issues = [data.issues];
   }
 
-  // 4. Normalize Summary (Ensure String)
+  // 6. Normalize Summary (Ensure String)
   const summary =
     typeof data.summary === "string" ? data.summary : "No summary provided.";
 
