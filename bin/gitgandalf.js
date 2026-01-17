@@ -1,6 +1,6 @@
 const MAX_DIFF_BYTES = 500_000;
 const BASE_URL = "http://127.0.0.1:1234";
-const LLM_TIMEOUT_MS = 100000;
+const LLM_TIMEOUT_MS = 100000; //100 seconds limit as my computer is bit slow
 
 const SYSTEM_PROMPT = `You are a senior software engineer acting as a pre-commit code reviewer.
   Your task is to analyze the provided git diff and metadata.
@@ -65,11 +65,44 @@ process.stdin.on("end", async () => {
 
     renderReview(decision, policyAction);
 
-    process.exit(0);
+    if (policyAction == "BLOCK") {
+      process.exit(1);
+    } else {
+      process.exit(0);
+    }
   } catch (error) {
     process.stdout.clearLine(0);
     process.stdout.cursorTo(0);
-    console.error("❌ Git Gandalf Error:", error.message);
+    const isInfraError =
+      error.name === "AbortError" ||
+      error.message.includes("fetch failed") ||
+      (error.cause &&
+        (error.cause.code === "ECONNREFUSED" ||
+          error.cause.code === "ECONNRESET"));
+
+    const C = {
+      Reset: "\x1b[0m",
+      Red: "\x1b[31m",
+      Yellow: "\x1b[33m",
+      Bold: "\x1b[1m",
+    };
+
+    if (isInfraError) {
+      //If the AI is broken/slow, don't stop. WARN and ALLOW.
+      console.log(`\n${C.Yellow}${C.Bold}⚠️  Git Gandalf Skipped${C.Reset}`);
+      console.log(
+        `${C.Yellow}Reason: Local LLM is unreachable or timed out.${C.Reset}`,
+      );
+      console.log(`${C.Yellow}Proceeding without review.${C.Reset}\n`);
+      process.exit(0);
+    } else {
+      console.error(
+        `\n${C.Red}${C.Bold}❌ Git Gandalf Internal Error${C.Reset}`,
+      );
+      console.error(`${C.Red}Reason: ${error.message}${C.Reset}`);
+      console.error(`${C.Red}Commit blocked for safety.${C.Reset}\n`);
+      process.exit(1);
+    }
     process.exit(1);
   }
 });
